@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
-#include <time.h>
 #include <errno.h>
 #include <netdb.h>
 #include <sys/socket.h>
@@ -12,6 +11,8 @@
 
 #define PORT "80"
 #define DELAY 1000
+#define MAX_HTTP_REQUEST_LEN 1024
+#define MAX_HTTP_RESPONSE_LEN 4096
 
 /*
  * Team Nile
@@ -22,20 +23,21 @@
  * ARGUMENTS: An optional file path can be given as an argument, if not present,
  *            the default path ~/etc/lirc/lircd.conf is used
  * 
- * LAST MODIFIED: December 2, 2014 @ 20:34 (UTC)
+ * LAST MODIFIED: December 3, 2014 @ 21:38 (UTC)
  *
  */
 
 //Function prototypes for key handlers
-char *handle_key_power(char *http_request);
-char *handle_key_stop(char *http_request);
-char *handle_key_pause(char *http_request);
-char *handle_key_play(char *http_request);
-char *handle_key_rewind(char *http_request);
-char *handle_key_forward(char *http_request);
+int handle_key_power(char *http_request, char *http_request_format);
+int handle_key_stop(char *http_request, char *http_request_format);
+int handle_key_pause(char *http_request, char *http_request_format);
+int handle_key_play(char *http_request, char *http_request_format);
+int handle_key_rewind(char *http_request, char *http_request_format);
+int handle_key_forward(char *http_request, char *http_request_format);
 
 //Function prototypes for network code
 int send_http_request(int sockfd, char *http_request);
+int receive_http_response(int sockfd, char *http_response);
 
 //Function prototypes for misc code
 char *concat(char *string1, char *string2);
@@ -46,19 +48,22 @@ int main(int argc, char* argv[])
     //LIRC Variables
     struct lirc_config *config;
 
-    //HTTP POST to send to web server
+    //HTTP Variables
     char *host = "team-nile-test.webege.com";
-    char *http_request = "POST /php/httptest.php HTTP/1.0\nHost: team-nile-test.webege.com\nContent-Type: application/x-www-form-urlencoded\nContent-Length: ";
-    char *final_http_request = NULL;
+    char *http_request_format = "POST /php/httptest.php HTTP/1.1\n"
+                                "Host: team-nile-test.webege.com\n"
+                                "Content-Type: application/x-www-form-urlencoded\n"
+                                "Content-Length: 10\n\n"
+                                "function=%s\n";
+    char http_request[MAX_HTTP_REQUEST_LEN];
+    char http_response[MAX_HTTP_RESPONSE_LEN];
 
     //Socket Variables
-    int sockfd, numbytes;
+    int sockfd, error;
     struct addrinfo hints, *addrinfo_list, *addrinfo;
-    int error;
 
-    //Timer Variables
-    int msec = 0;
-    clock_t start = clock(), diff;
+    //Misc Variables
+    int valid_key = 0;
 
     //Outputs usage and exits if given more than one file path in arguments
     if (argc>2)
@@ -74,34 +79,39 @@ int main(int argc, char* argv[])
         return -1;
     }
 
-    //Initializes hints and set appropriately
+    //Clears hints structure and set appropriately for call to getaddrinfo()
     memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
-    //
+    //Gets the linked list of possible addrinfo structures
     if (error = getaddrinfo(host, PORT, &hints, &addrinfo_list) != 0)
     {
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(error));
         return -1;
     }
 
+    //Iterate through linked list of possible addrinfo structures and attempts to create socket to connect to
     for (addrinfo = addrinfo_list; addrinfo != NULL; addrinfo = addrinfo->ai_next)
     {
+        //Creates a socket
         if ((sockfd = socket(addrinfo->ai_family, addrinfo->ai_socktype, addrinfo->ai_protocol)) == -1)
         {
             continue;
         }
 
+        //Connect to socket
         if (connect(sockfd, addrinfo->ai_addr, addrinfo->ai_addrlen) == -1)
         {
             close(sockfd);
             continue;
         }
 
+        //Break out of loop if calls to socket() and connect() are both successful
         break;
     }
 
+    //If none of the addrinfo structures in the linked list works, then exit program
     if (addrinfo == NULL)
     {
         fprintf(stderr, "failed to connect to %s\n", host);
@@ -110,7 +120,10 @@ int main(int argc, char* argv[])
 
     fprintf(stdout, "connection to %s was successful\n", host);
 
-    freeaddrinfo(addrinfo_list);
+    close(sockfd);
+
+    //Deallocate memory from linked list of addrinfo structures
+    //freeaddrinfo(addrinfo_list);
 
     //Read in configuration file from either argument or default path
     if (lirc_readconfig(argc==2 ? argv[1]:NULL, &config, NULL) == 0)
@@ -120,54 +133,72 @@ int main(int argc, char* argv[])
         //Blocks the program until an IR signal is recieved from key press
         while (lirc_nextcode(&code)==0)
         {
-            //Handle any logic corresponding to the key pressed, if any
+            //Handle logic key press, if any
             if (code==NULL) continue;
             {
-                diff = clock() - start;
-                msec = diff*1000/CLOCKS_PER_SEC;
-                printf("%d\n", msec);
-                if (msec > DELAY)
+                //Clears request and response buffer
+                memset(&http_request, 0, sizeof http_request);
+                memset(&http_response, 0, sizeof http_response);
+
+                if (strstr(code,"KEY_POWER"))
                 {
-                    if (strstr(code,"KEY_POWER"))
-                    {
-                        if ((final_http_request = handle_key_power(http_request)) == NULL) { return -1; }
-                    }
-                    else if (strstr(code,"KEY_STOP"))
-                    {
-                        if ((final_http_request = handle_key_stop(http_request)) == NULL) { return -1; }
-                    }
-                    else if (strstr(code,"KEY_PAUSE"))
-                    {
-                        if ((final_http_request = handle_key_pause(http_request)) == NULL) { return -1; }
-                    }
-                    else if (strstr(code,"KEY_PLAY"))
-                    {
-                        if ((final_http_request = handle_key_play(http_request)) == NULL) { return -1; }
-                    }
-                    else if (strstr(code,"KEY_REWIND"))
-                    {
-                        if ((final_http_request = handle_key_rewind(http_request)) == NULL) { return -1; }
+                    if ((valid_key = handle_key_power(http_request, http_request_format)) == -1) { return -1; }
+                }
+                else if (strstr(code,"KEY_STOP"))
+                {
+                    if ((valid_key = handle_key_stop(http_request, http_request_format)) == -1) { return -1; }
+                }
+                else if (strstr(code,"KEY_PAUSE"))
+                {
+                    if ((valid_key = handle_key_pause(http_request, http_request_format)) == -1) { return -1; }
+                }
+                else if (strstr(code,"KEY_PLAY"))
+                {
+                    if ((valid_key = handle_key_play(http_request, http_request_format)) == -1) { return -1; }
+                }
+                else if (strstr(code,"KEY_REWIND"))
+                {
+                    if ((valid_key = handle_key_rewind(http_request, http_request_format)) == -1) { return -1; }
+                }
+                else if (strstr(code,"KEY_FORWARD"))
+                {
+                    if ((valid_key = handle_key_forward(http_request, http_request_format)) == -1) { return -1; }
+                }
 
-                    }
-                    else if (strstr(code,"KEY_FORWARD"))
+                if (valid_key)
+                {
+                    //Creates socket
+                    if ((sockfd = socket(addrinfo->ai_family, addrinfo->ai_socktype, addrinfo->ai_protocol)) == -1)
                     {
-                        if ((final_http_request = handle_key_forward(http_request)) == NULL) { return -1; }
+                        return -1;
                     }
 
-                    if (final_http_request != NULL)
+                    //Connect to socket
+                    if (connect(sockfd, addrinfo->ai_addr, addrinfo->ai_addrlen) == -1)
                     {
-                        if (send_http_request(sockfd, final_http_request) == -1)
-                        {
-                            fprintf(stderr, "An error has occur when sending the HTTP request\n");
-                        }
-                        else
-                        {
-                            fprintf(stdout, "HTTP request has been sent successfully.\n%s", final_http_request);
-                        }
-                        free(final_http_request);
-                        final_http_request = NULL;
-                        //start = clock();
+                        close(sockfd);
+                        return -1;
                     }
+
+                    if (send_http_request(sockfd, http_request) == -1)
+                    {
+                        fprintf(stderr, "An error has occur while sending the HTTP request\n");
+                    }
+                    else
+                    {
+                        fprintf(stdout, "HTTP request has been sent successfully.\n--------------------------------------------------\n%s\n\n", http_request);
+                    }
+
+                    if (receive_http_response(sockfd, http_response) == -1)
+                    {
+                        fprintf(stderr, "An error has occur while receiving the HTTP response\n");
+                    }
+                    else
+                    {
+                        fprintf(stdout, "HTTP response has been received successfully.\n--------------------------------------------------\n%s\n\n", http_response);
+                    }
+
+                    close(sockfd);
                 }
             }
             free(code); //Free allocated memory for code after key press is handled
@@ -180,75 +211,84 @@ int main(int argc, char* argv[])
 } //end of main()
 
 
-//Handlers for key presses
-//These will be replaced with real functions later on
-char *handle_key_power(char *http_request)
+//Key press handlers
+//Constructs the http_request string to be sent
+int handle_key_power(char *http_request, char *http_request_format)
 {
     printf("POWER BUTTON PRESSED!\n");
-    char *http_request_new = NULL;
-    http_request_new = concat(http_request, "10\n\nfunction=1\n");
-    return http_request_new;
+    sprintf(http_request, http_request_format, "1");
+    return 1;
 }
 
-char *handle_key_stop(char *http_request)
+int handle_key_stop(char *http_request, char *http_request_format)
 {
     printf("STOP BUTTON PRESSED!\n");
-    char *http_request_new = NULL;
-    http_request_new = concat(http_request, "10\n\nfunction=2\n");
-    exit(EXIT_SUCCESS);
-    return http_request_new;
+    sprintf(http_request, http_request_format, "2");
+    return 1;
 }
 
-char *handle_key_pause(char *http_request)
+int handle_key_pause(char *http_request, char *http_request_format)
 {
     printf("PAUSE BUTTON PRESSED!\n");
-    char *http_request_new = NULL;
-    http_request_new = concat(http_request, "10\n\nfunction=3\n");
-    return http_request_new;
+    sprintf(http_request, http_request_format, "3");
+    return 1;
 }
 
-char *handle_key_play(char *http_request)
+int handle_key_play(char *http_request, char *http_request_format)
 {
     printf("PLAY BUTTON PRESSED!\n");
-    char *http_request_new = NULL;
-    http_request_new = concat(http_request, "10\n\nfunction=4\n");
-    return http_request_new;
+    sprintf(http_request, http_request_format, "4");
+    return 1;
 }
 
-char *handle_key_rewind(char *http_request)
+int handle_key_rewind(char *http_request, char *http_request_format)
 {
     printf("REWIND BUTTON PRESSED!\n");
-    char *http_request_new = NULL;
-    http_request_new = concat(http_request, "10\n\nfunction=5\n");
-    return http_request_new;
+    sprintf(http_request, http_request_format, "5");
+    return 1;
 }
 
-char *handle_key_forward(char *http_request)
+int handle_key_forward(char *http_request, char *http_request_format)
 {
     printf("FORWARD BUTTON PRESSED!\n");
-    char *http_request_new = NULL;
-    http_request_new = concat(http_request, "10\n\nfunction=6\n");
-    return http_request_new;
+    sprintf(http_request, http_request_format, "6");
+    return 1;
 }
 
 int send_http_request(int sockfd, char *http_request)
 {
+    int http_request_length = strlen(http_request);
     int bytes_sent = 0;
     int total_bytes_sent = 0;
-    int http_request_length = strlen(http_request);
-    int bytes_left = http_request_length;
-    while (total_bytes_sent < http_request_length)
+    do
     {
-        if ((bytes_sent = send(sockfd, http_request+total_bytes_sent, bytes_left, 0)) == -1)
+        if ((bytes_sent = send(sockfd, http_request+total_bytes_sent, http_request_length-total_bytes_sent, 0)) == -1)
         {
             break;
         }
 
         total_bytes_sent = total_bytes_sent + bytes_sent;
-        bytes_left = bytes_left - bytes_sent;
-    }
+    } while (total_bytes_sent < http_request_length);
 
     return bytes_sent==-1 ? -1:0;
+}
+
+int receive_http_response(int sockfd, char *http_response)
+{
+    int http_response_length = MAX_HTTP_RESPONSE_LEN;
+    int bytes_received = 0;
+    int total_bytes_received = 0;
+    do
+    {
+        if ((bytes_received = recv(sockfd, http_response+total_bytes_received, http_response_length-total_bytes_received, 0)) <= 0)
+        {
+            break;
+        }
+
+        total_bytes_received = total_bytes_received + bytes_received;
+    } while (total_bytes_received < http_response_length);
+
+    return bytes_received==-1 ? -1:0;
 }
 
 char *concat(char *string1, char *string2)
