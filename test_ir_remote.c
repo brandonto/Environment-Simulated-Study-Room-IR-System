@@ -1,3 +1,16 @@
+/*
+ * Team Nile
+ *
+ * DESCRIPTION: This program demos the infrared capabilities of the raspberry pi
+ *              using the LIRC library. (http://www.lirc.org/)
+ *
+ * ARGUMENTS: An optional file path can be given as an argument, if not present,
+ *            the default path ~/etc/lirc/lircd.conf is used
+ * 
+ * LAST MODIFIED: December 3, 2014 @ 22:53 (UTC)
+ *
+ */
+
 #include <lirc/lirc_client.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,19 +26,6 @@
 #define DELAY 1000
 #define MAX_HTTP_REQUEST_LEN 1024
 #define MAX_HTTP_RESPONSE_LEN 4096
-
-/*
- * Team Nile
- *
- * DESCRIPTION: This program demos the infrared capabilities of the raspberry pi
- *              using the LIRC library. (http://www.lirc.org/)
- *
- * ARGUMENTS: An optional file path can be given as an argument, if not present,
- *            the default path ~/etc/lirc/lircd.conf is used
- * 
- * LAST MODIFIED: December 3, 2014 @ 21:38 (UTC)
- *
- */
 
 //Function prototypes for key handlers
 int handle_key_power(char *http_request, char *http_request_format);
@@ -118,12 +118,9 @@ int main(int argc, char* argv[])
         return -1;
     }
 
-    fprintf(stdout, "connection to %s was successful\n", host);
+    fprintf(stdout, "connection to %s was successful\n\n", host);
 
     close(sockfd);
-
-    //Deallocate memory from linked list of addrinfo structures
-    //freeaddrinfo(addrinfo_list);
 
     //Read in configuration file from either argument or default path
     if (lirc_readconfig(argc==2 ? argv[1]:NULL, &config, NULL) == 0)
@@ -186,7 +183,9 @@ int main(int argc, char* argv[])
                     }
                     else
                     {
-                        fprintf(stdout, "HTTP request has been sent successfully.\n--------------------------------------------------\n%s\n\n", http_request);
+                        fprintf(stdout, "HTTP request has been sent successfully.\n"
+                                        "--------------------------------------------------\n"
+                                        "%s\n\n", http_request);
                     }
 
                     if (receive_http_response(sockfd, http_response) == -1)
@@ -195,7 +194,9 @@ int main(int argc, char* argv[])
                     }
                     else
                     {
-                        fprintf(stdout, "HTTP response has been received successfully.\n--------------------------------------------------\n%s\n\n", http_response);
+                        fprintf(stdout, "HTTP response has been received successfully.\n"
+                                        "--------------------------------------------------\n"
+                                        "%s\n\n", http_response);
                     }
 
                     close(sockfd);
@@ -206,8 +207,12 @@ int main(int argc, char* argv[])
         lirc_freeconfig(config); //Free allocated memory for configuration structure
     }
 
+    //Deallocate memory from linked list of addrinfo structures
+    freeaddrinfo(addrinfo_list);
+
     lirc_deinit(); //Deinitializes LIRC, called at end of program execution
-    return 0;
+
+    return 0; //EXIT_SUCCESS
 } //end of main()
 
 
@@ -215,46 +220,47 @@ int main(int argc, char* argv[])
 //Constructs the http_request string to be sent
 int handle_key_power(char *http_request, char *http_request_format)
 {
-    printf("POWER BUTTON PRESSED!\n");
+    printf("POWER BUTTON WAS PRESSED!\n\n");
     sprintf(http_request, http_request_format, "1");
     return 1;
 }
 
 int handle_key_stop(char *http_request, char *http_request_format)
 {
-    printf("STOP BUTTON PRESSED!\n");
+    printf("STOP BUTTON WAS PRESSED!\n\n");
     sprintf(http_request, http_request_format, "2");
     return 1;
 }
 
 int handle_key_pause(char *http_request, char *http_request_format)
 {
-    printf("PAUSE BUTTON PRESSED!\n");
+    printf("PAUSE BUTTON WAS PRESSED!\n\n");
     sprintf(http_request, http_request_format, "3");
     return 1;
 }
 
 int handle_key_play(char *http_request, char *http_request_format)
 {
-    printf("PLAY BUTTON PRESSED!\n");
+    printf("PLAY BUTTON WAS PRESSED!\n\n");
     sprintf(http_request, http_request_format, "4");
     return 1;
 }
 
 int handle_key_rewind(char *http_request, char *http_request_format)
 {
-    printf("REWIND BUTTON PRESSED!\n");
+    printf("REWIND BUTTON WAS PRESSED!\n\n");
     sprintf(http_request, http_request_format, "5");
     return 1;
 }
 
 int handle_key_forward(char *http_request, char *http_request_format)
 {
-    printf("FORWARD BUTTON PRESSED!\n");
+    printf("FORWARD BUTTON WAS PRESSED!\n\n");
     sprintf(http_request, http_request_format, "6");
     return 1;
 }
 
+//Sends HTTP request, looping if neccesary
 int send_http_request(int sockfd, char *http_request)
 {
     int http_request_length = strlen(http_request);
@@ -273,6 +279,7 @@ int send_http_request(int sockfd, char *http_request)
     return bytes_sent==-1 ? -1:0;
 }
 
+//Receives HTTP response, looping if neccesary
 int receive_http_response(int sockfd, char *http_response)
 {
     int http_response_length = MAX_HTTP_RESPONSE_LEN;
@@ -288,9 +295,16 @@ int receive_http_response(int sockfd, char *http_response)
         total_bytes_received = total_bytes_received + bytes_received;
     } while (total_bytes_received < http_response_length);
 
+    if (total_bytes_received == http_response_length)
+    {
+        fprintf(stderr, "ERROR: Buffer overflow storing the HTTP response, you may want to increase MAX_HTTP_RESPONSE_LEN\n");
+        exit(1);
+    }
+
     return bytes_received==-1 ? -1:0;
 }
 
+//Concatenates two strings and returns the combined string in dynamic memory
 char *concat(char *string1, char *string2)
 {
     char *result = malloc(strlen(string1)+strlen(string2)+1);
