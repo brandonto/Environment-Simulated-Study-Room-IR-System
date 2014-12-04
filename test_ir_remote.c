@@ -17,13 +17,14 @@
 #include <stdarg.h>
 #include <string.h>
 #include <errno.h>
+#include <time.h>
 #include <netdb.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
 
 #define PORT "80"
-#define DELAY 1000
+#define DELAY 1 //1 second delay between
 #define MAX_HTTP_REQUEST_LEN 1024
 #define MAX_HTTP_RESPONSE_LEN 4096
 
@@ -49,6 +50,7 @@ int main(int argc, char* argv[])
     struct lirc_config *config;
 
     //HTTP Variables
+    //char *host = "10.0.0.2";
     char *host = "team-nile-test.webege.com";
     char *http_request_format = "POST /php/httptest.php HTTP/1.1\n"
                                 "Host: team-nile-test.webege.com\n"
@@ -64,6 +66,9 @@ int main(int argc, char* argv[])
 
     //Misc Variables
     int valid_key = 0;
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    time_t start_time = tv.tv_sec, end_time, time_delay;
 
     //Outputs usage and exits if given more than one file path in arguments
     if (argc>2)
@@ -133,73 +138,81 @@ int main(int argc, char* argv[])
             //Handle logic key press, if any
             if (code==NULL) continue;
             {
-                //Clears request and response buffer
-                memset(&http_request, 0, sizeof http_request);
-                memset(&http_response, 0, sizeof http_response);
+                gettimeofday(&tv, NULL);
+                end_time = tv.tv_sec;
+                printf("Starttime=%ld\tEndtime=%ld\n\n", start_time, end_time);
+                if (end_time - start_time > DELAY)
+                {
+                    //Clears request and response buffer
+                    memset(&http_request, 0, sizeof http_request);
+                    memset(&http_response, 0, sizeof http_response);
 
-                if (strstr(code,"KEY_POWER"))
-                {
-                    if ((valid_key = handle_key_power(http_request, http_request_format)) == -1) { return -1; }
-                }
-                else if (strstr(code,"KEY_STOP"))
-                {
-                    if ((valid_key = handle_key_stop(http_request, http_request_format)) == -1) { return -1; }
-                }
-                else if (strstr(code,"KEY_PAUSE"))
-                {
-                    if ((valid_key = handle_key_pause(http_request, http_request_format)) == -1) { return -1; }
-                }
-                else if (strstr(code,"KEY_PLAY"))
-                {
-                    if ((valid_key = handle_key_play(http_request, http_request_format)) == -1) { return -1; }
-                }
-                else if (strstr(code,"KEY_REWIND"))
-                {
-                    if ((valid_key = handle_key_rewind(http_request, http_request_format)) == -1) { return -1; }
-                }
-                else if (strstr(code,"KEY_FORWARD"))
-                {
-                    if ((valid_key = handle_key_forward(http_request, http_request_format)) == -1) { return -1; }
-                }
-
-                if (valid_key)
-                {
-                    //Creates socket
-                    if ((sockfd = socket(addrinfo->ai_family, addrinfo->ai_socktype, addrinfo->ai_protocol)) == -1)
+                    if (strstr(code,"KEY_POWER"))
                     {
-                        return -1;
+                        if ((valid_key = handle_key_power(http_request, http_request_format)) == -1) { return -1; }
+                    }
+                    else if (strstr(code,"KEY_STOP"))
+                    {
+                        if ((valid_key = handle_key_stop(http_request, http_request_format)) == -1) { return -1; }
+                    }
+                    else if (strstr(code,"KEY_PAUSE"))
+                    {
+                        if ((valid_key = handle_key_pause(http_request, http_request_format)) == -1) { return -1; }
+                    }
+                    else if (strstr(code,"KEY_PLAY"))
+                    {
+                        if ((valid_key = handle_key_play(http_request, http_request_format)) == -1) { return -1; }
+                    }
+                    else if (strstr(code,"KEY_REWIND"))
+                    {
+                        if ((valid_key = handle_key_rewind(http_request, http_request_format)) == -1) { return -1; }
+                    }
+                    else if (strstr(code,"KEY_FORWARD"))
+                    {
+                        if ((valid_key = handle_key_forward(http_request, http_request_format)) == -1) { return -1; }
                     }
 
-                    //Connect to socket
-                    if (connect(sockfd, addrinfo->ai_addr, addrinfo->ai_addrlen) == -1)
+                    if (valid_key)
                     {
+                        //Creates socket
+                        if ((sockfd = socket(addrinfo->ai_family, addrinfo->ai_socktype, addrinfo->ai_protocol)) == -1)
+                        {
+                            return -1;
+                        }
+
+                        //Connect to socket
+                        if (connect(sockfd, addrinfo->ai_addr, addrinfo->ai_addrlen) == -1)
+                        {
+                            close(sockfd);
+                            return -1;
+                        }
+
+                        if (send_http_request(sockfd, http_request) == -1)
+                        {
+                            fprintf(stderr, "An error has occur while sending the HTTP request\n");
+                        }
+                        else
+                        {
+                            fprintf(stdout, "HTTP request has been sent successfully.\n"
+                                            "--------------------------------------------------\n"
+                                            "%s\n\n", http_request);
+                        }
+
+                        if (receive_http_response(sockfd, http_response) == -1)
+                        {
+                            fprintf(stderr, "An error has occur while receiving the HTTP response\n");
+                        }
+                        else
+                        {
+                            fprintf(stdout, "HTTP response has been received successfully.\n"
+                                            "--------------------------------------------------\n"
+                                            "%s\n\n", http_response);
+                        }
+
                         close(sockfd);
-                        return -1;
                     }
-
-                    if (send_http_request(sockfd, http_request) == -1)
-                    {
-                        fprintf(stderr, "An error has occur while sending the HTTP request\n");
-                    }
-                    else
-                    {
-                        fprintf(stdout, "HTTP request has been sent successfully.\n"
-                                        "--------------------------------------------------\n"
-                                        "%s\n\n", http_request);
-                    }
-
-                    if (receive_http_response(sockfd, http_response) == -1)
-                    {
-                        fprintf(stderr, "An error has occur while receiving the HTTP response\n");
-                    }
-                    else
-                    {
-                        fprintf(stdout, "HTTP response has been received successfully.\n"
-                                        "--------------------------------------------------\n"
-                                        "%s\n\n", http_response);
-                    }
-
-                    close(sockfd);
+                    gettimeofday(&tv, NULL);
+                    start_time = tv.tv_sec;
                 }
             }
             free(code); //Free allocated memory for code after key press is handled
