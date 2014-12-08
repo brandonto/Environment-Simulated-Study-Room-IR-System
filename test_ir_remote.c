@@ -7,7 +7,7 @@
  * ARGUMENTS: An optional file path can be given as an argument, if not present,
  *            the default path ~/etc/lirc/lircd.conf is used
  * 
- * LAST MODIFIED: December 3, 2014 @ 22:53 (UTC)
+ * LAST MODIFIED: December 8, 2014 @ 19:24 (UTC)
  *
  */
 
@@ -50,10 +50,9 @@ int main(int argc, char* argv[])
     struct lirc_config *config;
 
     //HTTP Variables
-    //char *host = "10.0.0.2";
-    char *host = "team-nile-test.webege.com";
-    char *http_request_format = "POST /php/httptest.php HTTP/1.1\n"
-                                "Host: team-nile-test.webege.com\n"
+    char *host = "10.0.0.2";
+    char *http_request_format = "POST /php/remote_control_api.php HTTP/1.1\n"
+                                "Host: 10.0.0.2\n"
                                 "Content-Type: application/x-www-form-urlencoded\n"
                                 "Content-Length: 10\n\n"
                                 "function=%s\n";
